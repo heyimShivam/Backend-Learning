@@ -1,15 +1,30 @@
 import express from "express";
+import path from "path";
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import pool from "./db.js";
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
 import authenticateToken from './authMiddleware.js';
 import dotenv from 'dotenv';
+import authRoutes from './routes/authRoutes.js';
+import cors from 'cors';
+import cookieParser from 'cookie-parser';
 
 const app = express();
+
+const corsOptions = {
+    origin: 'http://localhost:3000',
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
+app.use(cookieParser());
 dotenv.config();
 
+app.use(express.static(path.join(__dirname, 'build')));
 app.use(express.json());
-// Error handling middleware
 
 app.use((err, req, res, next) => {
     console.error(err.stack);
@@ -20,93 +35,12 @@ app.use((err, req, res, next) => {
     });
 });
 
-app.get('/', (req, res) => {
-    console.log(req.ip);
-    return res.status(200).send('Server is live');
-});
-
-app.post('/add-task', (req, res) => {
-    const taskdata = req.body;
-
-    console.log('Data', taskdata);
-
-    return res.status(200).send('Data Saved successfully!');
-});
+// app.get('/', (req, res) => {
+//     return res.status(200).sendFile(path.join(__dirname, '/build/index.html'));
+// });
 
 
-app.post('/sign-up', async (req, res) => {
-    console.log(req.body);
-    const { name, email, password } = req.body;
-
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-    if (!name || !email || !password) {
-        return res.status(400).json({ error: "Please add right User details." });
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-        return res.status(400).json({ error: "Email is not in the right format." });
-    }
-
-    const userCheck = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-
-    if (userCheck.rows.length > 0) {
-        return res.status(400).json({
-            error: "Bhai, ye email already registered hai. Login karle!"
-        });
-    }
-
-    try {
-        const result = await pool.query(
-            'INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING *',
-            [name, email, hashedPassword]
-        );
-
-        const user = result.rows[0];
-        const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '24h' });
-        return res.status(201).json({
-            message: "Mubarak ho! Account ban gaya.",
-            token,
-            user: { id: user.id, name: user.name, email: user.email }
-        });;
-    } catch (err) {
-        console.error(err);
-        return res.status(500).send("DB Error ho gaya!");
-    }
-});
-
-app.post('/login', async (req, res) => {
-    const { email, password } = req.body;
-
-    try {
-        const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-
-        if (userResult.rows.length === 0) {
-            return res.status(401).json({ error: "Email ya Password galat hai, bhai!" });
-        }
-
-        const user = userResult.rows[0];
-
-        const isMatch = await bcrypt.compare(password, user.password);
-
-        if (!isMatch) {
-            return res.status(401).json({ error: "Email ya Password galat hai, bhai!" });
-        }
-
-        const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '24h' });
-
-        return res.status(200).json({
-            message: "Welcome back! Login successful.",
-            token,
-            user: { id: user.id, name: user.name, email: user.email }
-        });
-    } catch (err) {
-        console.error(err.message);
-        res.status(500).send("Server ki halat kharab hai (Server Error)");
-    }
-});
+app.use('', authRoutes);
 
 app.patch('/tasks/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
@@ -181,6 +115,26 @@ app.post('/tasks', authenticateToken, async (req, res) => {
         console.error(err.message);
         return res.status(500).send("Task create nahi ho paya!");
     }
+});
+
+app.get('/', (req, res) => {
+    res.sendFile(path.resolve(__dirname, 'build', 'index.html'));
+});
+
+app.get('/verify', authenticateToken, (req, res) => {
+    res.status(200).json({
+        loggedIn: true,
+        user: req.user
+    });
+});
+
+app.post('/logout', (req, res) => {
+    res.clearCookie('token', {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'Lax'
+    });
+    return res.status(200).json({ message: "Logged out successfully!" });
 });
 
 app.listen(process.env.PORT, () => {
