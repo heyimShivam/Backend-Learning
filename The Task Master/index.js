@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/authRoutes.js';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import multer from 'multer';
 
 const app = express();
 
@@ -19,10 +20,22 @@ const corsOptions = {
     allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, 'uploads/'); // Is folder mein file jayegi
+    },
+    filename: function (req, file, cb) {
+        // Filename unique hona chahiye (Timestamp + Original Name)
+        cb(null, Date.now() + '-' + file.originalname);
+    }
+});
+const upload = multer({ storage: storage });
+
 app.use(cors(corsOptions));
 app.use(cookieParser());
 dotenv.config();
 
+app.use('/uploads', express.static('uploads'));
 app.use(express.static(path.join(__dirname, 'build')));
 app.use(express.json());
 
@@ -135,6 +148,11 @@ app.post('/logout', (req, res) => {
         sameSite: 'Lax'
     });
     return res.status(200).json({ message: "Logged out successfully!" });
+});
+
+app.post('/tasks/upload', upload.single('taskFile'), (req, res) => {
+    console.log(req.file);
+    res.json({ message: "File uploaded successfully!", path: req.file.path });
 });
 
 app.listen(process.env.PORT, () => {
